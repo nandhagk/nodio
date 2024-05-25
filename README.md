@@ -1,9 +1,14 @@
 ### Build Instructions
 
 ```bash
+git submodule update --init --recursive
+
 mkdir build
 cd build
-cmake ../rtaudio
+FOR NON BAKED:
+    cmake ../rtaudio
+FOR WINDOWS:
+    cmake ..\rtaudio -DCMAKE_CXX_COMPILER="g++.exe" -G "MinGW Makefiles"
 make
 
 cd ../

@@ -8,6 +8,7 @@
 */
 /******************************************/
 
+#include <cstdint>
 #include "RtAudio.h"
 #include <cstdlib>
 #include <iostream>
