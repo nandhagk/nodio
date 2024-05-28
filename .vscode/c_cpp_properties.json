@@ -1,0 +1,19 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/usr/include/qt6",
+                "${workspaceFolder}/QtNodes/include",
+                "${workspaceFolder}/QtNodes/internal",
+                "/usr/include/qt6/QtCore",
+                "/usr/include/qt6/QtGui"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/lib64/ccache/clang",
+            "intelliSenseMode": "linux-clang-x64"
+        }
+    ],
+    "version": 4
+}
