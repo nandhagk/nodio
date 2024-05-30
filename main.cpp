@@ -1,128 +1,100 @@
-#include <QtNodes/ConnectionStyle>
-#include <QtNodes/DataFlowGraphModel>
-#include <QtNodes/DataFlowGraphicsScene>
-#include <QtNodes/GraphicsView>
-#include <QtNodes/NodeData>
-#include <QtNodes/NodeDelegateModelRegistry>
-
-#include <QtGui/QScreen>
-#include <QtWidgets/QApplication>
-#include <QtWidgets/QMenuBar>
-#include <QtWidgets/QVBoxLayout>
-
-#include <QtGui/QScreen>
+#include "RtAudio.h"
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <functional>
 #include <iostream>
 
-#include "AdditionModel.hpp"
-#include "DivisionModel.hpp"
-#include "MultiplicationModel.hpp"
-#include "NumberDisplayDataModel.hpp"
-#include "NumberSourceDataModel.hpp"
-#include "SubtractionModel.hpp"
+using Amplitude_t = double;
+#define FORMAT RTAUDIO_FLOAT64
+#define BUFFER_FRAMES 512
+#define CHANNELS 2
+unsigned int bufferBytes = BUFFER_FRAMES * CHANNELS * sizeof(Amplitude_t);
+#define BUFFER_SIZE (bufferBytes / sizeof(Amplitude_t))
 
-#include "RtAudio.h"
+class Transformer {
+  public:
+    virtual void transform(Amplitude_t *output, Amplitude_t *input) = 0;
+};
 
-using QtNodes::ConnectionStyle;
-using QtNodes::DataFlowGraphicsScene;
-using QtNodes::DataFlowGraphModel;
-using QtNodes::GraphicsView;
-using QtNodes::NodeDelegateModelRegistry;
+int inout(void *outputBuffer, void *inputBuffer, unsigned int /*nBufferFrames*/,
+          double streamTime, RtAudioStreamStatus status, void *data) {
+    // Since the number of input and output channels is equal, we can do
+    // a simple buffer copy operation here.
+    if (status)
+        std::cout << "Stream over/underflow detected." << std::endl;
 
-static std::shared_ptr<NodeDelegateModelRegistry> registerDataModels() {
-    auto ret = std::make_shared<NodeDelegateModelRegistry>();
-    ret->registerModel<NumberSourceDataModel>("Sources");
-
-    ret->registerModel<NumberDisplayDataModel>("Displays");
-
-    ret->registerModel<AdditionModel>("Operators");
-
-    ret->registerModel<SubtractionModel>("Operators");
-
-    ret->registerModel<MultiplicationModel>("Operators");
-
-    ret->registerModel<DivisionModel>("Operators");
-
-    return ret;
-}
-
-static void setStyle() {
-    ConnectionStyle::setConnectionStyle(
-        R"(
-  {
-    "ConnectionStyle": {
-      "ConstructionColor": "gray",
-      "NormalColor": "black",
-      "SelectedColor": "gray",
-      "SelectedHaloColor": "deepskyblue",
-      "HoveredColor": "deepskyblue",
-
-      "LineWidth": 3.0,
-      "ConstructionLineWidth": 2.0,
-      "PointDiameter": 10.0,
-
-      "UseDataDefinedColors": true
+    std::vector<Transformer *> transformers =
+        *(static_cast<std::vector<Transformer *> *>(data));
+    for (auto transformer : transformers) {
+        transformer->transform(static_cast<Amplitude_t *>(outputBuffer),
+                               static_cast<Amplitude_t *>(inputBuffer));
     }
-  }
-  )");
+    return 0;
 }
+
+class Amplifier : virtual public Transformer {
+  public:
+    int amplification_constant;
+    Amplifier(int amplification_constant)
+        : amplification_constant(amplification_constant) {}
+    void transform(Amplitude_t *output, Amplitude_t *input) {
+        for (int i = 0; i < BUFFER_SIZE; ++i) {
+            output[i] = input[i] * amplification_constant;
+        }
+    }
+};
+
+void delay(Amplitude_t *output, Amplitude_t *input) {}
 
 int main(int argc, char *argv[]) {
-    QApplication app(argc, argv);
-
     RtAudio adac;
     std::vector<unsigned int> deviceIds = adac.getDeviceIds();
+    if (deviceIds.size() < 1) {
+        std::cerr << "\nERROR! No audio devices found!\n";
+        exit(1);
+    }
 
-    std::cout << deviceIds.size() << '\n';
+    unsigned int channels = CHANNELS;
+    unsigned int sample_rate = 48000;
 
-    setStyle();
+    adac.showWarnings(true);
 
-    std::shared_ptr<NodeDelegateModelRegistry> registry = registerDataModels();
+    unsigned int bufferFrames = BUFFER_FRAMES;
+    RtAudio::StreamParameters iParams, oParams;
+    iParams.nChannels = channels;
+    iParams.firstChannel = 0;
+    oParams.nChannels = channels;
+    oParams.firstChannel = 0;
 
-    QWidget mainWidget;
+    iParams.deviceId = adac.getDefaultInputDevice();
+    oParams.deviceId = adac.getDefaultOutputDevice();
 
-    auto menuBar = new QMenuBar();
-    QMenu *menu = menuBar->addMenu("File");
+    RtAudio::StreamOptions options;
 
-    auto saveAction = menu->addAction("Save Scene");
-    saveAction->setShortcut(QKeySequence::Save);
+    std::vector<Transformer *> transformers;
+    transformers.push_back(new Amplifier(2));
 
-    auto loadAction = menu->addAction("Load Scene");
-    loadAction->setShortcut(QKeySequence::Open);
+    if (adac.openStream(&oParams, &iParams, FORMAT, sample_rate, &bufferFrames,
+                        &inout, (void *)&transformers, &options)) {
+        goto cleanup;
+    }
 
-    QVBoxLayout *l = new QVBoxLayout(&mainWidget);
+    if (adac.startStream())
+        goto cleanup;
 
-    DataFlowGraphModel dataFlowGraphModel(registry);
+    char input;
+    std::cout << "\nRunning ... press <enter> to quit (buffer frames = "
+              << bufferFrames << ").\n";
+    std::cin.get(input);
 
-    l->addWidget(menuBar);
-    auto scene = new DataFlowGraphicsScene(dataFlowGraphModel, &mainWidget);
+    // Stop the stream.
+    if (adac.isStreamRunning())
+        adac.stopStream();
 
-    auto view = new GraphicsView(scene);
-    l->addWidget(view);
-    l->setContentsMargins(0, 0, 0, 0);
-    l->setSpacing(0);
+cleanup:
+    if (adac.isStreamOpen())
+        adac.closeStream();
 
-    QObject::connect(saveAction, &QAction::triggered, scene,
-                     [scene, &mainWidget]() {
-                         if (scene->save())
-                             mainWidget.setWindowModified(false);
-                     });
-
-    QObject::connect(loadAction, &QAction::triggered, scene,
-                     &DataFlowGraphicsScene::load);
-
-    QObject::connect(scene, &DataFlowGraphicsScene::sceneLoaded, view,
-                     &GraphicsView::centerScene);
-
-    QObject::connect(scene, &DataFlowGraphicsScene::modified, &mainWidget,
-                     [&mainWidget]() { mainWidget.setWindowModified(true); });
-
-    mainWidget.setWindowTitle("[*]Data Flow: simplest calculator");
-    mainWidget.resize(800, 600);
-    // Center window.
-    mainWidget.move(
-        QApplication::primaryScreen()->availableGeometry().center() -
-        mainWidget.rect().center());
-    mainWidget.showNormal();
-
-    return app.exec();
+    return 0;
 }
