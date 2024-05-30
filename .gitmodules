@@ -1,3 +1,6 @@
-[submodule "rtaudio"]
-	path = rtaudio
-	url = https://github.com/thestk/rtaudio
+[submodule "imgui"]
+	path = imgui
+	url = https://github.com/ocornut/imgui.git
+[submodule "imnodes"]
+	path = imnodes
+	url = https://github.com/Nelarius/imnodes.git
